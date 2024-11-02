@@ -35,6 +35,8 @@ venv.bak/
 *.code-workspace
 .history
 
+.idea/
+
 # IDE - Jupyter Notebook
 .ipynb_checkpoints
 *.ipynb
@@ -76,3 +78,4 @@ Thumbs.db
 .env
 /artifacts/*
 *.pdf
+/logs/*

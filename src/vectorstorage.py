@@ -1,70 +1,39 @@
 import faiss
 import numpy as np
-import pickle
-import os
-from typing import List, Tuple, Optional
-from dataclasses import dataclass
+from typing import List, Tuple, Dict, Any
 from src.data_models import TextChunk
 import logging
+import pickle
+import sys
+import os
 
 class SemanticVectorStore:
-    """A class for managing semantic vector storage and search using FAISS."""
-
-    def __init__(self, dimension: int = 768, logger=None):
+    def __init__(self, config:Dict, logger=logging.getLogger(__name__)):
+        """Initialize the vector storage."""
+        dimension = int(config.get("DEV", "embedding_size"))
         self.logger = logger
         self.dimension = dimension
-        self.index = faiss.IndexFlatL2(dimension)  # L2 distance for similarity
+        self.nn = int(config.get("DEV", "num_nearest_neighbours"))
+        self.index = faiss.IndexFlatL2(dimension)
         self.chunks = []
         self.logger.info("Initialized SemanticVectorStore with dimension %d.", dimension)
 
     def add_chunks(self, chunks: List[TextChunk]):
-        """Add text chunks and their embeddings to the FAISS index."""
-        if not chunks:
-            self.logger.warning("No chunks provided for addition.")
-            return
-
+        """Add chunks with precomputed embeddings to the vector store."""
         embeddings = [chunk.embedding for chunk in chunks if chunk.embedding is not None]
-        if not embeddings:
-            self.logger.error("Chunks have no embeddings to add to the vector store.")
-            raise ValueError("Chunks have no embeddings to add to the vector store.")
-        
-        # Check for consistency in embedding dimensions
-        embedding_dim = embeddings[0].shape[0]
-        if embedding_dim != self.dimension:
-            self.logger.error("Mismatch in embedding dimensions. Expected: %d, Got: %d", self.dimension, embedding_dim)
-            raise ValueError(f"Embedding dimension mismatch. Expected {self.dimension}, got {embedding_dim}")
-
         embeddings_array = np.array(embeddings, dtype='float32')
-        
-        try:
-            self.index.add(embeddings_array)
-            self.chunks.extend(chunks)
-            self.logger.info("Added %d chunks to the vector store.", len(chunks))
-        except Exception as e:
-            self.logger.exception("Failed to add chunks to the vector store: %s", e)
-            raise
+        self.index.add(embeddings_array)
+        self.chunks.extend(chunks)
+        self.logger.info("Added %d chunks to the vector store.", len(chunks))
 
-    def search(self, query_embedding: np.ndarray, k: int = 5) -> List[Tuple[TextChunk, float]]:
-        """Search the vector store for similar chunks using a query embedding."""
-        if query_embedding is None or query_embedding.shape[0] != self.dimension:
-            self.logger.error("Query embedding has an invalid shape: %s", query_embedding.shape)
-            raise ValueError("Query embedding has an invalid shape.")
-        
+    def search(self, query_embedding: np.ndarray) -> List[Tuple[TextChunk, float]]:
+        """Search for similar chunks based on the query embedding."""
         query_embedding = query_embedding.reshape(1, -1).astype('float32')
-        
-        try:
-            distances, indices = self.index.search(query_embedding, k)
-            results = [
-                (self.chunks[idx], float(dist)) 
-                for idx, dist in zip(indices[0], distances[0]) 
-                if idx != -1
-            ]
-            self.logger.info("Search completed, returning %d results.", len(results))
-            return results
-        except Exception as e:
-            self.logger.exception("Failed to perform search in the vector store: %s", e)
-            raise
-
+        distances, indices = self.index.search(query_embedding, k=self.nn)
+        results = [(self.chunks[idx], float(dist)) for idx, dist in zip(indices[0], distances[0]) if idx != -1]
+        self.logger.info("Search completed, returning %d results.", len(results))
+        return results
+    
     def save(self, directory: str):
         """Persist vector store and metadata to disk."""
         os.makedirs(directory, exist_ok=True)
@@ -109,3 +78,12 @@ class SemanticVectorStore:
         except Exception as e:
             logger.exception("Failed to load the vector store: %s", e)
             raise
+
+    def __call__(self, chunks:List[TextChunk])->Any:
+        try:
+            self.add_chunks(chunks)
+            self.logger.info("chunks stored to vector store successfully.")
+            return self
+        except Exception as e:
+            self.logger.error("Error processing PDF to vectors: %s", str(e))
+            sys.exit(1)

@@ -3,20 +3,18 @@ import spacy
 from typing import List, Dict, Tuple
 import numpy as np
 import re
-from transformers import AutoTokenizer, AutoModel
-import torch
 from src.data_models import TextChunk
-from src.vectorstorage import SemanticVectorStore
 import sys
 
 
 class SemanticPDFChunker:
     def __init__(self, config: Dict, logger):
         """
-        Initialize the chunker with model, tokenizer, and NLP processing tools.
+        Initialize the chunker with NLP processing tools.
 
         Parameters:
         - config (dict): Configuration dictionary to set up model and parameters.
+        - logger
         """
         try:
             self.logger = logger
@@ -26,18 +24,8 @@ class SemanticPDFChunker:
             self.max_chunk_size = int(config.get("DEV", "max_chunk_size"))
             self.min_chunk_size = int(config.get("DEV", "min_chunk_size"))
             self.max_length = int(config.get("DEV", "max_length"))
-
-            # Initialize the model and tokenizer
-            self.model = AutoModel.from_pretrained(self.embedding_model_name, trust_remote_code=True)
-            self.tokenizer = AutoTokenizer.from_pretrained(self.embedding_model_name)
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            self.model.to(self.device)
-
             # Initialize spaCy for text processing without word vectors
             self.nlp = spacy.load("en_core_web_sm")
-
-            # Initialize vector store for embeddings
-            self.vector_store = SemanticVectorStore(dimension=self.embedding_size, logger=self.logger)
 
             # Define common section header patterns
             self.section_patterns = [
@@ -45,25 +33,10 @@ class SemanticPDFChunker:
                 r"^\d+[\.:]\d*\s+(.+)$",
                 r"^[A-Z][A-Z\s]+(?:\:|$)",
             ]
-            self.logger.info("SemanticPDFChunker initialized successfully.")
+            self.logger.info("Initialized SemanticPDFChunker successfully.")
         except Exception as e:
             self.logger.error("Error initializing SemanticPDFChunker: %s", str(e))
             sys.exit(1)
-
-    def compute_embedding(self, text: str) -> np.ndarray:
-        """Generate text embeddings using the pre-trained model."""
-        try:
-            inputs = self.tokenizer(
-                text, max_length=self.max_length, padding=True, truncation=True, return_tensors="pt"
-            ).to(self.device)
-
-            with torch.no_grad():
-                outputs = self.model(**inputs)
-                embeddings = outputs.last_hidden_state.mean(dim=1)
-            return embeddings.cpu().numpy()[0]
-        except Exception as e:
-            self.logger.error("Error computing embedding: %s", str(e))
-            return np.zeros(self.embedding_size)
 
     def extract_structured_text(self, pdf_path: str) -> List[Dict]:
         """Extract structured text with formatting information from a PDF."""
@@ -145,22 +118,6 @@ class SemanticPDFChunker:
             combined_chunks.append(current_chunk)
         return combined_chunks
 
-    def process_pdf_to_vectors(self, pdf_path: str) -> SemanticVectorStore:
-        """Process a PDF file, extract text, compute embeddings, and store in vector store."""
-        try:
-            chunks = self.process_pdf(pdf_path)
-            combined_chunks = self.combine_small_chunks(chunks)
-
-            for chunk in combined_chunks:
-                chunk.embedding = self.compute_embedding(chunk.text)
-
-            self.vector_store.add_chunks(combined_chunks)
-            self.logger.info("PDF processed to vector store successfully.")
-            return self.vector_store
-        except Exception as e:
-            self.logger.error("Error processing PDF to vectors: %s", str(e))
-            return SemanticVectorStore(dimension=self.embedding_size, logger=self.logger)
-
     def process_pdf(self, pdf_path: str) -> List[TextChunk]:
         """Extract and create semantic chunks from a PDF document."""
         try:
@@ -231,37 +188,13 @@ class SemanticPDFChunker:
         except Exception as e:
             self.logger.error("Error creating semantic chunks: %s", str(e))
             return []
-
-    def find_relevant_chunks(self, query: str, k: int = 5) -> List[Tuple[TextChunk, float]]:
-        """Find chunks relevant to a query based on embeddings similarity."""
+    
+    def __call__(self, pdf_path: str) -> List:
+        """Process a PDF file, extract text, compute embeddings, and store in vector store."""
         try:
-            query_embedding = self.compute_embedding(query)
-            return self.vector_store.search(query_embedding, k)
+            chunks = self.process_pdf(pdf_path)
+            combined_chunks = self.combine_small_chunks(chunks)
+            return combined_chunks
         except Exception as e:
-            self.logger.error("Error finding relevant chunks: %s", str(e))
+            self.logger.error("Error processing PDF to vectors: %s", str(e))
             return []
-
-    def answer_question(self, question: str, k: int = 3) -> Dict:
-        """Answer a question by searching for relevant chunks and compiling context."""
-        try:
-            relevant_chunks = self.find_relevant_chunks(question, k)
-            context = "\n".join(
-                [f"[Section: {chunk.section_title}] {chunk.text}" for chunk, score in relevant_chunks]
-            )
-
-            return {
-                "question": question,
-                "relevant_chunks": [
-                    {
-                        "text": chunk.text,
-                        "section": chunk.section_title,
-                        "page": chunk.page_num + 1,
-                        "relevance_score": float(score),
-                    }
-                    for chunk, score in relevant_chunks
-                ],
-                "context": context,
-            }
-        except Exception as e:
-            self.logger.error("Error answering question: %s", str(e))
-            return {"question": question, "relevant_chunks": [], "context": ""}
