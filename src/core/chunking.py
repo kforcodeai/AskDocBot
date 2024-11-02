@@ -3,7 +3,7 @@ import spacy
 from typing import List, Dict, Tuple
 import numpy as np
 import re
-from src.data_models import TextChunk
+from src.core.data_models import TextChunk
 import sys
 
 

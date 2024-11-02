@@ -1,7 +1,7 @@
 import faiss
 import numpy as np
 from typing import List, Tuple, Dict, Any
-from src.data_models import TextChunk
+from src.core.data_models import TextChunk
 import logging
 import pickle
 import sys

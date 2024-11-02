@@ -2,7 +2,7 @@ import json
 import openai
 import logging
 from typing import List, Dict
-from src.data_models import QAResponse
+from src.core.data_models import QAResponse
 
 class OpenAIPDFQuestionAnswering:
     def __init__(self, config, api_key: str, logger=logging.getLogger(__name__)):
@@ -12,7 +12,7 @@ class OpenAIPDFQuestionAnswering:
         self.client = openai.OpenAI(api_key=api_key)
         self.logger.info("Initialized OpenAIPDFQuestionAnswering instance.")
 
-    def get_answer_from_openai(self, question: str, context: str) -> Dict[str, any]:
+    def get_answer(self, question: str, context: str) -> Dict[str, any]:
         """Send question and context to OpenAI API and parse the response."""
         prompt = f"""
         Based on the following context, please answer the question. If the answer cannot be determined from the context, respond with "NA".

@@ -1,2 +1,2 @@
-pip install -r requirement.txt
+# pip install -r requirement.txt
 python3 ask_doc_bot.py handbook.pdf "What is the company name?" "Who is the CEO of the company?" "What is their vacation policy?" "What is the termination policy?" --user_command "Answer the questions and post results on Slack."

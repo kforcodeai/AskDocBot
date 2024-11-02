@@ -3,7 +3,7 @@ import torch
 from transformers import AutoTokenizer, AutoModel
 import torch
 import numpy as np
-from src.data_models import TextChunk
+from src.core.data_models import TextChunk
 import sys
 
 
