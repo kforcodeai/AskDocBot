@@ -1,51 +1,47 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict
 import json
-import os
 from src.core.chunking import SemanticPDFChunker
 from src.core.embedding import EmbeddingGenerator
 from src.core.vectorstorage import SemanticVectorStore
 from src.core.qa import OpenAIPDFQuestionAnswering
 from src.services.slack import SlackService
 from src.core.data_models import QAResponse, QAEncoder
-from src.utils.logger import get_logger
+from src.utils.logger import LoggerManager
+from src.utils.filemanager import FileManager
 
-logger = get_logger(__name__)
 
 class QAPipeline:
     def __init__(self, config_manager):
+        logger = LoggerManager().get_logger(__name__)
         self.config = config_manager.get_config()
         self.api_config = config_manager.get_api_config()
-        
+        self.file_manager = FileManager()
+
         self.chunker = SemanticPDFChunker(config=self.config, logger=logger)
         self.vectorizer = EmbeddingGenerator(config=self.config, logger=logger)
         self.vector_store = SemanticVectorStore(config=self.config, logger=logger)
         self.qa_system = OpenAIPDFQuestionAnswering(
-            config=self.config,
-            api_key=self.api_config.openai_api_key,
-            logger=logger
+            config=self.config, api_key=self.api_config.openai_api_key, logger=logger
         )
         self.slack_service = SlackService(self.api_config.slack_token)
+        self.logger = logger
 
     def process(
-        self,
-        pdf_path: str,
-        questions: List[str],
-        user_command: str,
-        slack_channel: str
+        self, pdf_path: str, questions: List[str], user_command: str, slack_channel: str
     ) -> None:
         try:
             # Process PDF
             chunks = self._process_pdf(pdf_path)
-            
+
             # Answer questions
             results = self._answer_questions(questions, chunks)
-            
+
             # Format and save results
             self._handle_results(results, user_command, slack_channel)
-            
+
         except Exception as e:
-            logger.error(f"Pipeline processing failed: {str(e)}", exc_info=True)
+            self.logger.error(f"Pipeline processing failed: {str(e)}")
             raise
 
     def _process_pdf(self, pdf_path: str):
@@ -57,23 +53,23 @@ class QAPipeline:
         results = []
         with ThreadPoolExecutor() as executor:
             futures = [
-                executor.submit(
-                    self._process_single_question, question, chunks
-                )
+                executor.submit(self._process_single_question, question, chunks)
                 for question in questions
             ]
             for future in as_completed(futures):
                 try:
                     results.append(future.result())
                 except Exception as e:
-                    logger.error("Error processing question in thread.", exc_info=e)
+                    self.logger.error(
+                        "Error processing question in thread.", exc_info=e
+                    )
         return results
 
     def _process_single_question(self, question: str, chunks) -> QAResponse:
         chunk_result = self._retrieve_relevant_chunks(question)
         context = self._format_context(chunk_result["relevant_chunks"])
         openai_response = self.qa_system.get_answer(question, context)
-        
+
         return QAResponse(
             question=question,
             answer=openai_response["answer"],
@@ -81,14 +77,14 @@ class QAPipeline:
             relevant_chunks=chunk_result["relevant_chunks"],
             source_pages=list(
                 set(chunk["page"] for chunk in chunk_result["relevant_chunks"])
-            )
+            ),
         )
 
     def _retrieve_relevant_chunks(self, question: str) -> Dict:
         try:
             question_embed = self.vectorizer.compute_embedding(question)
             relevant_chunks = self.vector_store.search(question_embed)
-            
+
             return {
                 "question": question,
                 "relevant_chunks": [
@@ -100,45 +96,41 @@ class QAPipeline:
                     }
                     for chunk, score in relevant_chunks
                 ],
-                "context": self._format_context([
-                    {"text": chunk.text, "section": chunk.section_title}
-                    for chunk, _ in relevant_chunks
-                ])
+                "context": self._format_context(
+                    [
+                        {"text": chunk.text, "section": chunk.section_title}
+                        for chunk, _ in relevant_chunks
+                    ]
+                ),
             }
         except Exception as e:
-            logger.error(f"Error retrieving chunks: {str(e)}")
+            self.logger.error(f"Error retrieving chunks: {str(e)}")
             return {"question": question, "relevant_chunks": [], "context": ""}
 
     def _format_context(self, chunks: List[Dict]) -> str:
         return "\n\n".join(
-            f"[Section: {chunk['section']}] {chunk['text']}"
-            for chunk in chunks
+            f"[Section: {chunk['section']}] {chunk['text']}" for chunk in chunks
         )
 
     def _handle_results(
-        self,
-        results: List[QAResponse],
-        user_command: str,
-        slack_channel: str
+        self, results: List[QAResponse], user_command: str, slack_channel: str
     ) -> None:
         formatted_results = self._format_results(results)
-        
-        # Save results
-        output_folder = self.config.get("DEV", "output_folder", fallback="artifacts")
-        os.makedirs(output_folder, exist_ok=True)
-        output_file = os.path.join(output_folder, "qa_results.json")
-        
+
+        output_file = self.file_manager.generate_timestamped_filename(
+            prefix="qa_results", extension="json"
+        )
+
         with open(output_file, "w") as f:
             json.dump(formatted_results, f, cls=QAEncoder, indent=2)
-        logger.info(f"Results saved to {output_file}")
+        self.logger.info(f"Results saved to {output_file}")
 
         # Post to Slack if requested
         if "post results on slack" in user_command.lower():
             self.slack_service.post_message(
-                slack_channel,
-                json.dumps(formatted_results, cls=QAEncoder, indent=2)
+                slack_channel, json.dumps(formatted_results, cls=QAEncoder, indent=2)
             )
-            logger.info(f"Results posted to Slack channel: {slack_channel}")
+            self.logger.info(f"Results posted to Slack channel: {slack_channel}")
 
     def _format_results(self, qa_responses: List[QAResponse]) -> Dict:
         results = {"results": []}
@@ -146,11 +138,13 @@ class QAPipeline:
             answer = response.answer
             if response.confidence_score < 0.5:
                 answer = "Data Not Available"
-                
-            results["results"].append({
-                "question": response.question,
-                "answer": answer,
-                "confidence_score": response.confidence_score,
-                "source_pages": response.source_pages,
-            })
+
+            results["results"].append(
+                {
+                    "question": response.question,
+                    "answer": answer,
+                    "confidence_score": response.confidence_score,
+                    "source_pages": response.source_pages,
+                }
+            )
         return results
