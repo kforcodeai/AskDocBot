@@ -13,11 +13,13 @@ from src.utils.filemanager import FileManager
 
 class QAPipeline:
     def __init__(self, config_manager):
+        self.file_manager = FileManager()
         logger = LoggerManager().get_logger(__name__)
         self.config = config_manager.get_config()
         self.api_config = config_manager.get_api_config()
-        self.file_manager = FileManager()
+        self._initialize_core_services(logger)
 
+    def _initialize_core_services(self, logger):
         self.chunker = SemanticPDFChunker(config=self.config, logger=logger)
         self.vectorizer = EmbeddingGenerator(config=self.config, logger=logger)
         self.vector_store = SemanticVectorStore(config=self.config, logger=logger)
@@ -117,20 +119,25 @@ class QAPipeline:
     ) -> None:
         formatted_results = self._format_results(results)
 
-        output_file = self.file_manager.generate_timestamped_filename(
-            prefix="qa_results", extension="json"
-        )
+        result_file = self.file_manager.current_result_file
 
-        with open(output_file, "w") as f:
-            json.dump(formatted_results, f, cls=QAEncoder, indent=2)
-        self.logger.info(f"Results saved to {output_file}")
+        try:
+            with open(result_file, "w") as f:
+                json.dump(formatted_results, f, cls=QAEncoder, indent=2)
+            self.logger.info(f"Results saved to {result_file}")
 
-        # Post to Slack if requested
-        if "post results on slack" in user_command.lower():
-            self.slack_service.post_message(
-                slack_channel, json.dumps(formatted_results, cls=QAEncoder, indent=2)
-            )
-            self.logger.info(f"Results posted to Slack channel: {slack_channel}")
+            # Post to Slack if requested
+            if "post results on slack" in user_command.lower():
+                slack_message = (
+                    f"Results for run {self.file_manager.run_id}:\n"
+                    f"{json.dumps(formatted_results, cls=QAEncoder, indent=2)}"
+                )
+                self.slack_service.post_message(slack_channel, slack_message)
+                self.logger.info(f"Results posted to Slack channel: {slack_channel}")
+
+        except Exception as e:
+            self.logger.error(f"Error handling results: {str(e)}", exc_info=True)
+            raise
 
     def _format_results(self, qa_responses: List[QAResponse]) -> Dict:
         results = {"results": []}
