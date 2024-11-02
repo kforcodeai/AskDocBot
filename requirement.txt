@@ -6,3 +6,4 @@ numpy==1.23.5
 PyMuPDF==1.22.5
 spacy==3.5.3
 slack_sdk==3.21.3
+pytz==2024.2
