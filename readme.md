@@ -93,7 +93,7 @@ The output is structured as a JSON file, with each question-answer pair formatte
   "results": [
     {
       "question": "What is the company name?",
-      "answer": "Zania, Inc.",
+      "answer": "AskDocBot, Inc.",
       "confidence_score": 0.95,
       "source_pages": [3]
     },
