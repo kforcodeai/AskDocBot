@@ -4,10 +4,9 @@ import argparse
 import logging
 from dotenv import load_dotenv, find_dotenv
 from configparser import ConfigParser
-from slack_sdk import WebClient
-from slack_sdk.errors import SlackApiError
 from src.openai_qa import OpenAIPDFQuestionAnswering
 from src.data_models import QAEncoder
+from src.service import SlackService
 import spacy
 import sys
 import subprocess
@@ -25,6 +24,9 @@ def check_and_download_spacy_model():
         subprocess.check_call(
             [sys.executable, "-m", "spacy", "download", "en_core_web_sm"]
         )
+check_and_download_spacy_model()
+
+
 
 def load_config():
     """Load environment variables and configuration file."""
@@ -47,15 +49,6 @@ def initialize_artifacts_folder(config):
     artifacts_folder = config.get("DEV", "output_folder", fallback="artifacts")
     os.makedirs(artifacts_folder, exist_ok=True)
     return artifacts_folder
-
-def post_to_slack(slack_token, channel, message):
-    """Post a message to a specified Slack channel."""
-    client = WebClient(token=slack_token)
-    try:
-        response = client.chat_postMessage(channel=channel, text=message)
-        return response
-    except SlackApiError as e:
-        logger.error(f"Error posting to Slack: {e.response['error']}")
 
 def parse_user_input(user_command):
     """Parse the user's command to determine if results should be posted to Slack."""
@@ -83,11 +76,12 @@ def main(pdf_path, questions, user_command, slack_channel):
     config = load_config()
     api_key, slack_token = get_api_keys(config)
     artifacts_folder = initialize_artifacts_folder(config)
-    check_and_download_spacy_model()
     
     # Pass logger to the OpenAIPDFQuestionAnswering instance
     qa_system = OpenAIPDFQuestionAnswering(config, api_key, logger)
     answers = qa_system.process_questions(pdf_path, questions)
+    slack_service = SlackService(slack_token)
+
     results = format_results_json(questions, answers)
     
     output_file = os.path.join(artifacts_folder, f"qaresults_{answers['timestamp']}.json")
@@ -95,9 +89,8 @@ def main(pdf_path, questions, user_command, slack_channel):
         json.dump(results, f, cls=QAEncoder, indent=2)
     logger.info(f"Results saved to {output_file}")
     
-    if parse_user_input(user_command):
-        slack_message = json.dumps(results, indent=2)
-        post_to_slack(slack_token, slack_channel, slack_message)
+    if "post results on Slack" in user_command.lower():
+        slack_service.post_message(slack_channel, json.dumps(answers, cls=QAEncoder, indent=2))
         logger.info(f"Results posted to Slack channel: {slack_channel}")
 
 if __name__ == "__main__":
