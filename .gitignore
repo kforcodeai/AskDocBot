@@ -36,6 +36,7 @@ venv.bak/
 .history
 
 .idea/
+/idea/*
 
 # IDE - Jupyter Notebook
 .ipynb_checkpoints
